@@ -72,6 +72,20 @@ export default function PlanDetailPage() {
     if (!printRef.current || !project) return;
     setExporting(true);
     try {
+      const printArea = printRef.current;
+
+      // Desactivar animaciones en todas las tarjetas antes de capturar
+      const allCards = printArea.querySelectorAll("[data-testid^='day-card-']");
+      allCards.forEach((card) => {
+        card.style.opacity = "1";
+        card.style.animation = "none";
+        card.style.transform = "none";
+        card.style.transition = "none";
+      });
+
+      // Esperar a que el DOM se estabilice
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
       const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
@@ -97,8 +111,6 @@ export default function PlanDetailPage() {
         pdf.addImage(imgData, "JPEG", margin, cursorY, contentWidth, imgHeight);
         cursorY += imgHeight + 10;
       };
-
-      const printArea = printRef.current;
 
       const header = printArea.querySelector("header");
       if (header) await addNodeToPdf(header);
