@@ -1,0 +1,5 @@
+/* IMPULSE IA — estilos puntuales del layout principal */
+.App {
+    min-height: 100vh;
+    background: var(--pearl);
+}
