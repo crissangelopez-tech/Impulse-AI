@@ -72,32 +72,45 @@ export default function PlanDetailPage() {
     if (!printRef.current || !project) return;
     setExporting(true);
     try {
-      // Convertimos toda la zona "imprimible" a canvas y la paginamos en PDF
-      const node = printRef.current;
-      const canvas = await html2canvas(node, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-      });
-      const imgData = canvas.toDataURL("image/png");
-
       const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const margin = 20;
+      const contentWidth = pageWidth - margin * 2;
+      let cursorY = margin;
 
-      let heightLeft = imgHeight;
-      let position = 0;
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      const addNodeToPdf = async (node) => {
+        const canvas = await html2canvas(node, {
+          scale: 2,
+          backgroundColor: "#ffffff",
+          useCORS: true,
+          logging: false,
+        });
+        const imgData = canvas.toDataURL("image/jpeg", 0.85);
+        const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+        if (cursorY + imgHeight > pageHeight - margin) {
+          pdf.addPage();
+          cursorY = margin;
+        }
+
+        pdf.addImage(imgData, "JPEG", margin, cursorY, contentWidth, imgHeight);
+        cursorY += imgHeight + 10;
+      };
+
+      const printArea = printRef.current;
+
+      const header = printArea.querySelector("header");
+      if (header) await addNodeToPdf(header);
+
+      const dayCards = printArea.querySelectorAll("[data-testid='days-grid'] > *");
+      for (const card of dayCards) {
+        await addNodeToPdf(card);
       }
+
+      const footer = printArea.querySelector("footer");
+      if (footer) await addNodeToPdf(footer);
+
       const filename = `ImpulseIA_${project.company.replace(/\s+/g, "_")}_${project.duration_days}d.pdf`;
       pdf.save(filename);
       toast.success("PDF descargado");
