@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,7 @@ export default function MiEmpresaPage() {
     company: user?.company || "",
     industry: user?.industry || "",
     city: user?.city || "",
+    descripcion: user?.descripcion || "",
   });
 
   const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -116,6 +118,22 @@ export default function MiEmpresaPage() {
                 data-testid="empresa-city-input"
               />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="empresa-descripcion" className="label-eyebrow">
+              Descripción del negocio
+            </Label>
+            <Textarea
+              id="empresa-descripcion"
+              value={form.descripcion}
+              onChange={(e) => update("descripcion", e.target.value)}
+              placeholder="Ej: Servicio de valet parking para eventos y restaurantes. Choferes certificados, uniformados, manejo de autos de lujo con total seguridad."
+              className="min-h-[110px] rounded-lg bg-zinc-50 resize-none text-sm"
+              data-testid="empresa-descripcion-input"
+            />
+            <p className="text-xs text-zinc-400">
+              La IA usará esto para generar contenido más exacto en cada plan.
+            </p>
           </div>
           <Button
             type="submit"

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -60,6 +61,7 @@ export default function CreatePlanPage() {
     company: user?.company || "",
     industry: user?.industry || "",
     city: user?.city || "",
+    descripcion: user?.descripcion || "",
     objective: "Conseguir más clientes",
     duration_days: 7,
   });
@@ -68,7 +70,7 @@ export default function CreatePlanPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.company || !form.industry || !form.city || !form.objective) {
+    if (!form.company || !form.industry || !form.city || !form.objective || !form.descripcion) {
       toast.error("Completa todos los campos.");
       return;
     }
@@ -167,6 +169,25 @@ export default function CreatePlanPage() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Descripción del negocio */}
+          <div className="space-y-1.5">
+            <Label htmlFor="descripcion" className="label-eyebrow">
+              Descripción de tu negocio
+            </Label>
+            <Textarea
+              id="descripcion"
+              placeholder="Ej: Somos un servicio de valet parking para eventos y restaurantes en Mérida. Contamos con choferes certificados, uniformados, y manejamos autos de lujo con total seguridad."
+              value={form.descripcion}
+              onChange={(e) => update("descripcion", e.target.value)}
+              className="min-h-[110px] rounded-lg bg-zinc-50 resize-none text-sm"
+              required
+              data-testid="create-descripcion-input"
+            />
+            <p className="text-xs text-zinc-400">
+              Cuéntanos qué hace exactamente tu negocio — la IA lo usará para crear contenido más preciso.
+            </p>
           </div>
 
           {/* Duración */}

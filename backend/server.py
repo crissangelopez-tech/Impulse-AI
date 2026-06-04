@@ -60,8 +60,6 @@ DB_NAME = os.environ["DB_NAME"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 CORS_ORIGINS_RAW = os.environ.get("CORS_ORIGINS", "*")
-# CORS con wildcard "*" y credentials=True es inválido en todos los browsers modernos.
-# Si el .env trae "*", lo detectamos aquí y lanzamos un error claro al arrancar.
 if CORS_ORIGINS_RAW.strip() == "*":
     raise RuntimeError(
         "CORS_ORIGINS='*' es incompatible con cookies/credentials. "
@@ -81,11 +79,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("impulse-ia")
 
-# Cliente Mongo (Motor async)
 mongo_client = AsyncIOMotorClient(MONGO_URL)
 db = mongo_client[DB_NAME]
 
-# Cliente Groq (async, reutilizable)
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # ---------------------------------------------------------------------------
@@ -125,6 +121,7 @@ class ProfileUpdateIn(BaseModel):
     company: Optional[str] = None
     industry: Optional[str] = None
     city: Optional[str] = None
+    descripcion: Optional[str] = None
 
 
 class PasswordChangeIn(BaseModel):
@@ -138,6 +135,7 @@ class ProjectIn(BaseModel):
     city: str
     objective: str
     duration_days: int = Field(ge=1, le=30)
+    descripcion: Optional[str] = Field(default=None, max_length=600)
 
 
 class ProjectOut(BaseModel):
@@ -149,7 +147,7 @@ class ProjectOut(BaseModel):
     city: str
     objective: str
     duration_days: int
-    content: list  # lista de días generados
+    content: list
     created_at: str
 
 
@@ -157,7 +155,6 @@ class ProjectOut(BaseModel):
 # Helpers de autenticación
 # ---------------------------------------------------------------------------
 def hash_password(plain: str) -> str:
-    """Hashea una contraseña con bcrypt."""
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
@@ -169,7 +166,6 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 async def create_session(user_id: str) -> str:
-    """Crea un nuevo session_token persistido en Mongo (TTL 7 días)."""
     token = uuid.uuid4().hex
     expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)
     await db.user_sessions.insert_one(
@@ -184,7 +180,6 @@ async def create_session(user_id: str) -> str:
 
 
 def set_session_cookie(response: Response, token: str) -> None:
-    """Setea el cookie httpOnly del session_token."""
     response.set_cookie(
         key="session_token",
         value=token,
@@ -197,7 +192,6 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 
 def serialize_user(doc: dict) -> dict:
-    """Convierte un documento Mongo de user en payload UserOut (sin _id ni password_hash)."""
     return {
         "user_id": doc["user_id"],
         "name": doc["name"],
@@ -205,6 +199,7 @@ def serialize_user(doc: dict) -> dict:
         "company": doc.get("company", ""),
         "industry": doc.get("industry"),
         "city": doc.get("city"),
+        "descripcion": doc.get("descripcion"),
         "plan": doc.get("plan", "free"),
         "picture": doc.get("picture"),
         "auth_provider": doc.get("auth_provider", "email"),
@@ -216,10 +211,6 @@ async def get_current_user(
     authorization: Optional[str] = Header(default=None),
     session_token: Optional[str] = Cookie(default=None),
 ) -> dict:
-    """
-    Obtiene el usuario autenticado a partir del cookie session_token
-    o del header Authorization: Bearer <token>.
-    """
     token: Optional[str] = session_token
     if not token and authorization:
         parts = authorization.split(" ", 1)
@@ -233,7 +224,6 @@ async def get_current_user(
     if not session_doc:
         raise HTTPException(status_code=401, detail="Sesión inválida")
 
-    # Validar expiración (string ISO en Mongo)
     expires_at = session_doc["expires_at"]
     if isinstance(expires_at, str):
         expires_at = datetime.fromisoformat(expires_at)
@@ -261,6 +251,12 @@ SYSTEM_PROMPT = (
 
 
 def build_user_prompt(p: ProjectIn) -> str:
+    descripcion_line = (
+        f"- Descripción del negocio: {p.descripcion.strip()}"
+        if p.descripcion and p.descripcion.strip()
+        else ""
+    )
+
     return f"""Genera un calendario completo de contenido para redes sociales.
 
 Datos del negocio:
@@ -268,7 +264,10 @@ Datos del negocio:
 - Industria: {p.industry}
 - Ciudad: {p.city}
 - Objetivo principal: {p.objective}
+{descripcion_line}
 - Duración del plan: {p.duration_days} días
+
+IMPORTANTE: Usa la descripción del negocio para entender exactamente a qué se dedica la empresa y generar contenido preciso. No asumas ni inferras el giro del negocio solo por el nombre; basa el contenido en la descripción proporcionada.
 
 Devuelve EXCLUSIVAMENTE un objeto JSON con la siguiente forma exacta:
 
@@ -296,7 +295,6 @@ Reglas:
 
 
 async def generate_calendar_with_groq(p: ProjectIn) -> list[dict]:
-    """Llama a Groq y devuelve la lista de días (parseados)."""
     try:
         completion = await groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -309,14 +307,13 @@ async def generate_calendar_with_groq(p: ProjectIn) -> list[dict]:
             response_format={"type": "json_object"},
         )
         raw = completion.choices[0].message.content or "{}"
-    except Exception as exc:  # red, key inválida, etc.
+    except Exception as exc:
         logger.exception("Error llamando Groq")
         raise HTTPException(status_code=502, detail=f"Error generando plan con IA: {exc}")
 
     try:
         parsed: Any = json.loads(raw)
     except json.JSONDecodeError:
-        # Intento de rescate: encontrar el primer JSON dentro del string
         start, end = raw.find("{"), raw.rfind("}")
         if start == -1 or end == -1:
             raise HTTPException(status_code=502, detail="La IA no devolvió JSON válido")
@@ -326,7 +323,6 @@ async def generate_calendar_with_groq(p: ProjectIn) -> list[dict]:
     if not isinstance(days, list) or not days:
         raise HTTPException(status_code=502, detail="La IA no devolvió el calendario esperado")
 
-    # Sanitización mínima — aseguramos campos
     sanitized: list[dict] = []
     for i, d in enumerate(days, start=1):
         if not isinstance(d, dict):
@@ -374,6 +370,7 @@ async def register(payload: RegisterIn, response: Response) -> dict:
         "company": payload.company.strip(),
         "industry": None,
         "city": None,
+        "descripcion": None,
         "plan": "free",
         "picture": None,
         "auth_provider": "email",
@@ -400,10 +397,6 @@ async def login(payload: LoginIn, response: Response) -> dict:
 
 @api.post("/auth/google-session")
 async def google_session(payload: GoogleSessionIn, response: Response) -> dict:
-    """
-    Procesa el session_id devuelto por Emergent Auth tras login con Google.
-    Llama al endpoint oficial de Emergent para canjearlo por datos del usuario.
-    """
     async with httpx.AsyncClient(timeout=15) as client:
         try:
             r = await client.get(
@@ -423,7 +416,6 @@ async def google_session(payload: GoogleSessionIn, response: Response) -> dict:
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
-        # Actualizar metadatos suaves (foto, nombre si estaba vacío)
         updates: dict = {}
         if data.get("picture") and existing.get("picture") != data["picture"]:
             updates["picture"] = data["picture"]
@@ -441,6 +433,7 @@ async def google_session(payload: GoogleSessionIn, response: Response) -> dict:
             "company": "Mi Empresa",
             "industry": None,
             "city": None,
+            "descripcion": None,
             "plan": "free",
             "picture": data.get("picture"),
             "auth_provider": "google",
@@ -477,7 +470,6 @@ async def logout(
 
 @api.post("/auth/seed-demo")
 async def seed_demo() -> dict:
-    """Crea/actualiza la cuenta demo. Idempotente. No expone la contraseña."""
     await seed_demo_user()
     return {"ok": True, "email": os.environ.get("DEMO_EMAIL", "demo@impulseia.com")}
 
@@ -505,7 +497,6 @@ async def change_password(
     payload: PasswordChangeIn, user: dict = Depends(get_current_user)
 ) -> dict:
     if user.get("auth_provider") == "google" and not user.get("password_hash"):
-        # Permitir setear una contraseña por primera vez
         await db.users.update_one(
             {"user_id": user["user_id"]},
             {"$set": {"password_hash": hash_password(payload.new_password)}},
@@ -548,6 +539,7 @@ async def create_project(payload: ProjectIn, user: dict = Depends(get_current_us
         "industry": payload.industry,
         "city": payload.city,
         "objective": payload.objective,
+        "descripcion": payload.descripcion,
         "duration_days": payload.duration_days,
         "content": days,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -561,7 +553,6 @@ async def create_project(payload: ProjectIn, user: dict = Depends(get_current_us
 async def list_projects(user: dict = Depends(get_current_user)) -> list:
     cursor = db.projects.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(length=200)
-    # Versión "resumen" para listado (sin content completo para no pesar)
     summary = []
     for it in items:
         summary.append(
@@ -622,7 +613,6 @@ async def dashboard_stats(user: dict = Depends(get_current_user)) -> dict:
 # Seed demo + middleware + bootstrap
 # ---------------------------------------------------------------------------
 async def seed_demo_user() -> None:
-    """Crea la cuenta demo si no existe. Credenciales desde env (no hardcoded)."""
     demo_email = os.environ.get("DEMO_EMAIL", "demo@impulseia.com")
     demo_password = os.environ.get("DEMO_PASSWORD")
     if not demo_password:
@@ -639,6 +629,7 @@ async def seed_demo_user() -> None:
         "company": "Taquería El Patrón",
         "industry": "Restaurante",
         "city": "Mérida",
+        "descripcion": None,
         "plan": "free",
         "picture": None,
         "auth_provider": "email",
@@ -650,7 +641,6 @@ async def seed_demo_user() -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    # Índices útiles
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
