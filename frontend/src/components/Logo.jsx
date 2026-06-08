@@ -147,7 +147,7 @@ export default function App() {
       </div>
 
       {/* Variante light sobre fondo claro */}
-      <div style={{ background: "#ffffff", padding: "40px 60px", borderRadius: 20, border: "1px solid #e5e5e5", display: "flex", flexDirection: "column", gap: 32, alignItems: "flex-start" }}>
+      <div style={{ background: "#000000", padding: "40px 60px", borderRadius: 20, border: "1px solid #e5e5e5", display: "flex", flexDirection: "column", gap: 32, alignItems: "flex-start" }}>
         <p style={{ color: "#bbb", fontSize: 11, fontFamily: "monospace", margin: 0 }}>variant="light"</p>
         <Logo variant="light" animated />
       </div>
